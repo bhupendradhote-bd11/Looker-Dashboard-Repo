@@ -1,0 +1,197 @@
+WITH deals AS (
+  SELECT DISTINCT
+  toInt64(d.deal_id) as deal_id,
+  record_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as createdate,
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS deal_region, 
+  amount,
+  pipeline, 
+  deal_source,
+  -- company_name,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants',  'Energy') THEN 'Other'
+  --WHEN kore_primary_industry IS NULL THEN 'Industry - Not Assigned'
+  WHEN kore_primary_industry IS NULL or kore_primary_industry IN ('null', 'NULL', 'Null') THEN 'Industry - Not Assigned'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN is_there_a_confirmation_of_budget ='Yes' AND 
+    who_is_the_decision_maker IS NOT NULL AND 
+    use_case IS NOT NULL AND
+    what_is_the_estimated_timeline IS NOT NULL  THEN 'Yes'
+    ELSE 'No' END AS BANT,
+  last_contacted,
+  -- dc.job_title,
+  t.Name as Team,
+  d.partner_employee_point_of_contact_associated, 
+  d.trusted_advisor_associated,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  LEFT JOIN (SELECT DISTINCT deal_id, contact_id, initcapUTF8(job_title) AS job_title from kore_ai_hubspot.gs_deals_contacts where job_title IS NOT NULL) dc on d.deal_id = dc.deal_id
+  left join kore_ai_hubspot.gs_Teams t on d.hubspot_team = t.TeamId
+  WHERE 
+    close_date>='2025-04-01'
+    and deal_stage in (
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+)
+
+, 20_plus as (
+  SELECT DISTINCT *,
+  CASE WHEN deal_stage in (
+    '20% - Solution',
+    '30% - Proof',
+    '40% - Proposal',
+    '60% - Price Negotiation',
+    '75% - Contract Review') THEN 'Active Pipeline'
+    WHEN deal_stage in ('90% - Deal Desk Review',
+    'Closed Won') THEN 'Closed Won'
+    WHEN deal_stage in ('Closed Lost',
+    'Didn''t Qualify',
+    'Prospect Disengaged') THEN 'Closed Lost' else null end as stage,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month
+
+FROM deals
+WHERE close_date >= '2025-04-01'
+
+)
+
+, closed_won as (
+  SELECT 
+  close_fy,
+  close_quarter,
+  close_month,
+  CASE WHEN deal_owner_name IN (SELECT DISTINCT ae from kore_ai_hubspot.gs_closed_won_quotas) THEN deal_owner_name 
+  ELSE 'Other' end as deal_owner_name,
+  deal_region,
+
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 20_plus
+  WHERE close_fy>=2026
+  and stage = 'Closed Won'
+  GROUP BY 1,2,3,4,5
+)
+
+, active_pipe as (
+  SELECT 
+  close_fy,
+  close_quarter,
+  close_month,
+  CASE WHEN deal_owner_name IN (SELECT DISTINCT ae from kore_ai_hubspot.gs_closed_won_quotas) THEN deal_owner_name 
+  ELSE 'Other' end as deal_owner_name,
+  deal_region,
+
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 20_plus
+  WHERE close_fy=2026
+  and stage = 'Active Pipeline'
+  GROUP BY 1,2,3,4,5
+)
+
+, targets as (
+SELECT 
+CAST(fy AS INT) AS FY,
+quarter as Quarter,
+month as Month,
+region as Region,
+ae as AE,
+manager as POD_Leader,
+
+SUM(toFloat64(assigned_amount_quota)) AS assigned_amount_quota,
+SUM(toFloat32(assigned_deals_quota)) AS assigned_deals_quota,
+SUM(toFloat64(annualized_amount_quota)) AS annualized_amount_quota,
+SUM(toFloat32(annualized_deals_quota)) AS annualized_deals_quota
+
+FROM kore_ai_hubspot.gs_closed_won_quotas
+GROUP BY 1,2,3,4,5,6
+)
+
+SELECT 
+b.FY,
+b.Quarter,
+b.Month,
+b.Region,
+b.AE,
+b.POD_Leader,
+coalesce(sum(a.amount),0) as actual_amount,
+coalesce(sum(a.deals),0) as actual_deals, 
+coalesce(sum(c.amount),0) as active_amount, 
+coalesce(sum(c.deals),0) as active_deals, 
+
+SUM(toFloat64(coalesce(assigned_amount_quota,0))) AS assigned_amount_quota,
+SUM(toFloat32(coalesce(assigned_deals_quota,0))) AS assigned_deals_quota,
+SUM(toFloat64(coalesce(annualized_amount_quota,0))) AS annualized_amount_quota,
+SUM(toFloat32(coalesce(annualized_deals_quota,0))) AS annualized_deals_quota
+
+from targets b
+
+left JOIN closed_won a
+ON (b.FY = a.close_fy
+  AND b.Quarter = a.close_quarter 
+  AND b.Month = a.close_month
+  AND b.AE = a.deal_owner_name
+  AND b.Region = a.deal_region)
+
+left JOIN active_pipe c
+ON (b.FY = c.close_fy
+  AND b.Quarter = c.close_quarter 
+  AND b.Month = c.close_month
+  AND b.AE = c.deal_owner_name
+  AND b.Region = c.deal_region)
+
+GROUP BY 1,2,3,4,5,6
+
+
