@@ -1,0 +1,266 @@
+WITH pipe_gen AS (
+  SELECT DISTINCT
+  toInt64(d.deal_id) as deal_id,
+  record_id,
+  deal_name,
+  number_of_sales_activities,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as createdate,
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS deal_region, 
+  amount,
+  pipeline, 
+  deal_source,
+  company_name as company,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN is_there_a_confirmation_of_budget ='Yes' AND 
+    who_is_the_decision_maker IS NOT NULL AND 
+    use_case IS NOT NULL AND
+    what_is_the_estimated_timeline IS NOT NULL  THEN 'Yes'
+    ELSE 'No' END AS BANT,
+  last_contacted as last_contacted_date,
+  dc.job_title,
+  t.Name as Team,
+  d.partner_employee_point_of_contact_associated, 
+  d.trusted_advisor_associated,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  LEFT JOIN (SELECT DISTINCT deal_id, contact_id, initcapUTF8(job_title) AS job_title from kore_ai_hubspot.gs_deals_contacts where job_title IS NOT NULL) dc on d.deal_id = dc.deal_id
+  left join kore_ai_hubspot.gs_Teams t on d.hubspot_team = t.TeamId
+  WHERE 
+    create_date>='2025-04-01' and close_date >='2025-04-01'
+    and deal_stage in (
+      '1% - IQM Scheduled',
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+)
+
+, companies as (
+  select distinct 
+  id as company_id,
+  company_name,
+  ae_focus_account, 
+  company_owner, 
+  bdr_ai_for_service,
+  bdr_ai_for_work_and_process,
+  min(c.priority) as priority,
+  max(CAST(left(coalesce(last_contacted,'1900-01-01'), 10) as date)) as account_last_contacted
+from hs_analytics.companies c final
+
+where ae_focus_account = 'true'
+and company_id in (select distinct company_id_hs from kore_ai_hubspot.gs_company_ids_hs)
+group by 1,2,3,4,5,6
+)
+
+, final as (
+select 
+distinct 
+c.company_id,
+company_name,
+ae_focus_account, 
+company_owner, 
+concat(o1.firstName, ' ', o1.lastName) as company_owner_name,
+concat(o2.firstName, ' ', o2.lastName) as bdr_ai_for_service,
+concat(o3.firstName, ' ', o3.lastName) as bdr_ai_for_work_and_process,
+
+toYear(create_date) + if(toMonth(create_date) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(create_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(create_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(create_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(create_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(create_date, '%M'),3) AS create_month,
+toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+CASE 
+  WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS close_quarter,
+LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+d.deal_name,
+d.record_id as deal_id,
+deal_stage,
+deal_region,
+deal_source_rollup,
+create_date,
+close_date,
+became_5_deal_date, 
+became_10_deal_date, 
+became_20_deal_date,
+became_30_deal_date,
+became_40_deal_date,
+became_60_deal_date,
+became_75_deal_date,
+CASE 
+  WHEN deal_stage IN (
+    'Prospect Disengaged',
+    'Closed Lost',
+    'Didn''t Qualify',
+    '90% - Deal Desk Review',
+    'Closed Won'
+  ) THEN NULL
+  WHEN deal_stage = '1% - IQM Scheduled' AND create_date<>'1900-01-01' THEN DATE_DIFF('Day', create_date, CURRENT_DATE())
+  WHEN deal_stage = '5% - IQM Held' AND became_5_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_5_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '10% - Discovery' AND became_10_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_10_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '20% - Solution' AND became_20_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_20_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '30% - Proof' AND became_30_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_30_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '40% - Proposal' AND became_40_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_40_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '60% - Price Negotiation' AND became_60_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_60_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '75% - Contract Review' AND became_75_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_75_deal_date, CURRENT_DATE())
+  ELSE NULL END AS days_in_current_stage,
+
+DATE_DIFF('Day',create_date, became_5_deal_date) AS 1_to_5,
+DATE_DIFF('Day',became_5_deal_date, became_10_deal_date) AS 5_to_10,
+DATE_DIFF('Day',became_10_deal_date, became_20_deal_date) AS 10_to_20,
+DATE_DIFF('Day',became_20_deal_date, became_30_deal_date) AS 20_to_30,
+DATE_DIFF('Day',became_30_deal_date, became_40_deal_date) AS 30_to_40,
+DATE_DIFF('Day',became_40_deal_date, became_60_deal_date) AS 40_to_60,
+DATE_DIFF('Day',became_60_deal_date, became_75_deal_date) AS 60_to_75,
+
+last_contacted_date,
+number_of_sales_activities,
+ai_for_x,
+amount,
+deal_owner_name as deal_owner,
+deal_url,
+priority as company_priority,
+account_last_contacted
+
+from pipe_gen d
+JOIN companies c on d.company = c.company_name
+LEFT JOIN hs_analytics.owners o1 final ON c.company_owner = CAST(o1.id AS VARCHAR)
+LEFT JOIN hs_analytics.owners o2 final ON c.bdr_ai_for_service = CAST(o2.id AS VARCHAR)
+LEFT JOIN hs_analytics.owners o3 final ON c.bdr_ai_for_work_and_process = CAST(o3.id AS VARCHAR)
+
+)
+
+select 
+company_id,
+company_name,
+ae_focus_account, 
+company_owner, 
+company_owner_name,
+bdr_ai_for_service,
+bdr_ai_for_work_and_process,
+create_fy,
+create_quarter,
+create_month,
+close_fy,
+close_quarter,
+close_month,
+deal_name,
+deal_id,
+deal_stage,
+deal_region,
+deal_source_rollup,
+create_date,
+close_date,
+became_5_deal_date, 
+became_10_deal_date, 
+became_20_deal_date,
+became_30_deal_date,
+became_40_deal_date,
+became_60_deal_date,
+became_75_deal_date,
+days_in_current_stage,
+  case 
+	 when deal_stage='1% - IQM Scheduled' and days_in_current_stage<=7 then 'Green' 
+	 when deal_stage='1% - IQM Scheduled' and days_in_current_stage<=14 then 'Yellow'
+	 when deal_stage='1% - IQM Scheduled' and days_in_current_stage>14 then 'Red'	  
+	  
+	 when deal_stage='5% - IQM Held' and days_in_current_stage<=24 then 'Green' 
+	 when deal_stage='5% - IQM Held' and days_in_current_stage<=42 then 'Yellow'
+	 when deal_stage='5% - IQM Held' and days_in_current_stage>42 then 'Red'
+	 
+	 when deal_stage='10% - Discovery' and days_in_current_stage<=32 then 'Green' 
+	 when deal_stage='10% - Discovery' and days_in_current_stage<=56 then 'Yellow'
+	 when deal_stage='10% - Discovery' and days_in_current_stage>56 then 'Red'
+	 
+	 when deal_stage='20% - Solution' and days_in_current_stage<=47 then 'Green' 
+	 when deal_stage='20% - Solution' and days_in_current_stage<=82 then 'Yellow'
+	 when deal_stage='20% - Solution' and days_in_current_stage>82 then 'Red'
+	 
+	 when deal_stage='30% - Proof' and days_in_current_stage<=17 then 'Green' 
+	 when deal_stage='30% - Proof' and days_in_current_stage<=30 then 'Yellow'
+	 when deal_stage='30% - Proof' and days_in_current_stage>30 then 'Red'
+	 
+	 when deal_stage='40% - Proposal' and days_in_current_stage<=33 then 'Green' 
+	 when deal_stage='40% - Proposal' and days_in_current_stage<=58 then 'Yellow'
+	 when deal_stage='40% - Proposal' and days_in_current_stage>58 then 'Red'
+	 
+	 when deal_stage='60% - Price Negotiation' and days_in_current_stage<=31 then 'Green' 
+	 when deal_stage='60% - Price Negotiation' and days_in_current_stage<=54 then 'Yellow'
+	 when deal_stage='60% - Price Negotiation' and days_in_current_stage>54 then 'Red'
+	 
+	 when deal_stage='75% - Contract Review' and days_in_current_stage<=39 then 'Green' 
+	 when deal_stage='75% - Contract Review' and days_in_current_stage<=68 then 'Yellow'
+	 when deal_stage='75% - Contract Review' and days_in_current_stage>68 then 'Red' else null end as 
+	 deal_category,
+CASE WHEN (1_to_5<0 OR 1_to_5>10000) THEN 0 ELSE 1_to_5 END AS 1_to_5,
+CASE WHEN (5_to_10<0 OR 5_to_10>10000) THEN 0 ELSE 5_to_10 END AS 5_to_10,
+CASE WHEN (10_to_20<0 OR 10_to_20>10000) THEN 0 ELSE 10_to_20 END AS 10_to_20,
+CASE WHEN (20_to_30<0 OR 20_to_30>10000) THEN 0 ELSE 20_to_30 END AS 20_to_30,
+CASE WHEN (30_to_40<0 OR 30_to_40>10000) THEN 0 ELSE 30_to_40 END AS 30_to_40,
+CASE WHEN (40_to_60<0 OR 40_to_60>10000) THEN 0 ELSE 40_to_60 END AS 40_to_60,
+CASE WHEN (60_to_75<0 OR 60_to_75>10000) THEN 0 ELSE 60_to_75 END AS 60_to_75,
+
+last_contacted_date,
+number_of_sales_activities,
+ai_for_x,
+amount,
+deal_owner,
+deal_url,
+company_priority,
+account_last_contacted
+
+from final
+
