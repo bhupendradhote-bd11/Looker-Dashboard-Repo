@@ -1,0 +1,269 @@
+WITH active_pipe AS (
+  SELECT DISTINCT
+  toInt64(d.deal_id) as deal_id,
+  record_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as createdate,
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS deal_region, 
+  amount,
+  pipeline, 
+  deal_source,
+  -- company_name,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants',  'Energy') THEN 'Other'
+  --WHEN kore_primary_industry IS NULL THEN 'Industry - Not Assigned'
+  WHEN kore_primary_industry IS NULL or kore_primary_industry IN ('null', 'NULL', 'Null') THEN 'Industry - Not Assigned'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN is_there_a_confirmation_of_budget ='Yes' AND 
+    who_is_the_decision_maker IS NOT NULL AND 
+    use_case IS NOT NULL AND
+    what_is_the_estimated_timeline IS NOT NULL  THEN 'Yes'
+    ELSE 'No' END AS BANT,
+  CAST(LEFT(coalesce(last_contacted, '1900-01-01'), 10) AS DATE) as last_contacted,
+  -- dc.job_title,
+  t.Name as Team,
+  d.partner_employee_point_of_contact_associated, 
+  d.trusted_advisor_associated,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  LEFT JOIN (SELECT DISTINCT deal_id, contact_id, initcapUTF8(job_title) AS job_title from kore_ai_hubspot.gs_deals_contacts where job_title IS NOT NULL) dc on d.deal_id = dc.deal_id
+  left join kore_ai_hubspot.gs_Teams t on d.hubspot_team = t.TeamId
+  WHERE 
+    close_date>='2025-04-01'
+    and deal_stage in (
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged')
+    and pipeline='default'
+)
+
+, 20_active as (
+  SELECT DISTINCT *,
+  CASE WHEN deal_stage in (
+    '20% - Solution',
+    '30% - Proof',
+    '40% - Proposal',
+    '60% - Price Negotiation',
+    '75% - Contract Review') THEN 'Active Pipeline'
+    WHEN deal_stage in ('90% - Deal Desk Review',
+    'Closed Won') THEN 'Closed Won'
+    WHEN deal_stage in ('Closed Lost',
+    'Didn''t Qualify',
+    'Prospect Disengaged') THEN 'Closed Lost' else null end as stage,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+MONTH(close_date) AS close_month_num,
+DATE_DIFF('Day',became_5_deal_date, became_10_deal_date) AS 5_to_10,
+DATE_DIFF('Day',became_10_deal_date, became_20_deal_date) AS 10_to_20,
+DATE_DIFF('Day',became_20_deal_date, became_30_deal_date) AS 20_to_30,
+DATE_DIFF('Day',became_30_deal_date, became_40_deal_date) AS 30_to_40,
+DATE_DIFF('Day',became_40_deal_date, became_60_deal_date) AS 40_to_60,
+DATE_DIFF('Day',became_60_deal_date, became_75_deal_date) AS 60_to_75,
+DATE_DIFF('Day',last_contacted, current_date()) AS days_last_contacted,
+CASE 
+  WHEN deal_stage IN (
+    'Prospect Disengaged',
+    'Closed Lost',
+    'Didn''t Qualify',
+    '90% - Deal Desk Review',
+    'Closed Won'
+  ) THEN NULL
+  WHEN deal_stage = '5% - IQM Held' AND became_5_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_5_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '10% - Discovery' AND became_10_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_10_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '20% - Solution' AND became_20_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_20_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '30% - Proof' AND became_30_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_30_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '40% - Proposal' AND became_40_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_40_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '60% - Price Negotiation' AND became_60_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_60_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '75% - Contract Review' AND became_75_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_75_deal_date, CURRENT_DATE())
+  ELSE NULL END AS days_in_current_stage
+
+FROM active_pipe
+WHERE close_date >= '2025-04-01'
+and (deal_stage in (
+  '20% - Solution',
+  '30% - Proof',
+  '40% - Proposal',
+  '60% - Price Negotiation',
+  '75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'
+)
+OR (deal_stage in ('Closed Lost',
+  'Didn''t Qualify',
+  'Prospect Disengaged') and became_20_deal_date<>'1900-01-01'))
+
+)
+
+, active_final as (
+  SELECT 
+  close_fy,
+  close_quarter,
+  close_month,
+  close_month_num,
+  CASE WHEN deal_owner_name IN (SELECT DISTINCT ae from kore_ai_hubspot.gs_closed_won_quotas) THEN deal_owner_name 
+  ELSE 'Other' end as deal_owner_name,
+  deal_region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 20_active
+  WHERE close_fy=2026
+  and stage='Closed Won'
+  GROUP BY 1,2,3,4,5,6
+)
+
+, targets as (
+SELECT 
+CAST(fy AS INT) AS FY,
+quarter as Quarter,
+CASE WHEN quarter='Q1' THEN 1
+WHEN quarter='Q2' THEN 2
+WHEN quarter='Q3' THEN 3
+WHEN quarter='Q4' THEN 4 ELSE 0 END AS quarter_num,
+month as Month,
+CASE
+  WHEN month = 'Apr' THEN 1
+  WHEN month = 'May' THEN 2
+  WHEN month = 'Jun' THEN 3
+  WHEN month = 'Jul' THEN 4
+  WHEN month = 'Aug' THEN 5
+  WHEN month = 'Sep' THEN 6
+  WHEN month = 'Oct' THEN 7
+  WHEN month = 'Nov' THEN 8
+  WHEN month = 'Dec' THEN 9
+  WHEN month = 'Jan' THEN 10
+  WHEN month = 'Feb' THEN 11
+  WHEN month = 'Mar' THEN 12
+  ELSE NULL
+END AS month_num,
+CASE 
+  WHEN EXTRACT(MONTH FROM current_date()) >= 4 
+    THEN EXTRACT(MONTH FROM CURRENT_DATE()) - 3
+  ELSE 
+    EXTRACT(MONTH FROM CURRENT_DATE()) + 9
+END AS current_fy_month,
+multiIf(
+        toMonth(today()) BETWEEN 4 AND 6, 'Q1',
+        toMonth(today()) BETWEEN 7 AND 9, 'Q2',
+        toMonth(today()) BETWEEN 10 AND 12, 'Q3',
+        toMonth(today()) BETWEEN 1 AND 3, 'Q4',
+        NULL
+    ) AS current_fy_quarter,
+region as Region,
+ae as AE,
+manager as POD_Leader,
+
+SUM(toFloat64(assigned_amount_quota)) AS assigned_amount_quota,
+SUM(toFloat32(assigned_deals_quota)) AS assigned_deals_quota,
+SUM(toFloat64(annualized_amount_quota)) AS annualized_amount_quota,
+SUM(toFloat32(annualized_deals_quota)) AS annualized_deals_quota
+
+FROM kore_ai_hubspot.gs_closed_won_quotas
+GROUP BY 1,2,3,4,5,6,7,8,9,10
+)
+
+, final as (
+SELECT 
+b.FY,
+b.Quarter,
+b.quarter_num,
+b.Month,
+b.month_num,
+b.current_fy_month,
+b.current_fy_quarter,
+b.AE,
+b.POD_Leader,
+b.Region,
+sum(a.amount) as actual_amount, 
+sum(a.deals) as actual_deals,
+sum(CAST(coalesce(assigned_amount_quota,0) as int)) as assigned_amount_quota,
+sum(CAST(coalesce(assigned_deals_quota,0) as float)) as assigned_deals_quota
+
+from targets b
+left outer JOIN active_final a
+ON (b.FY = a.close_fy
+  AND b.Quarter = a.close_quarter 
+  AND b.Month = a.close_month
+  AND b.AE = a.deal_owner_name 
+  AND b.Region = a.deal_region)
+
+GROUP BY 1,2,3,4,5,6,7,8,9,10
+)
+
+
+SELECT 
+FY,
+Region,
+AE,
+POD_Leader,
+
+sum(CASE WHEN current_fy_month=month_num THEN assigned_deals_quota ELSE 0 END) assigned_deals_quota_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN assigned_deals_quota ELSE 0 END) assigned_deals_quota_QTD,
+sum(CASE WHEN month_num<=current_fy_month THEN assigned_deals_quota ELSE 0 END) AS assigned_deals_quota_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN actual_deals ELSE 0 END) actual_deals_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN actual_deals ELSE 0 END) actual_deals_QTD,
+sum(actual_deals) AS actual_deals_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN assigned_amount_quota ELSE 0 END) assigned_amount_quota_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN assigned_amount_quota ELSE 0 END) assigned_amount_quota_QTD,
+sum(CASE WHEN month_num<=current_fy_month THEN assigned_amount_quota ELSE 0 END) AS assigned_amount_quota_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN actual_amount ELSE 0 END) actual_amount_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN actual_amount ELSE 0 END) actual_amount_QTD,
+sum(actual_amount) AS actual_amount_YTD
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY  
+GROUP BY 1,2,3,4
+
+
+
+
