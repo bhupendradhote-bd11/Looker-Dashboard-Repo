@@ -1,0 +1,230 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt32(deal_id) as deal_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  partner_type,
+  what_hyperscaler_is_involved,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE 'No Priority' END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  --LEFT JOIN hs_analytics.owners o2 final ON d.deal_owner = CAST(o2.id AS VARCHAR)
+  WHERE 
+    became_10_deal_date>='2025-04-01'
+  	AND deal_stage in (
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+    --and is_this_a_deal_with_inception NOT IN ('Yes')
+    --and deal_type NOT IN ('Partner-Led SMB')
+)
+
+, 10_creation as (
+SELECT DISTINCT *,
+'10% Created' as stage,
+toYear(became_10_deal_date) + if(toMonth(became_10_deal_date) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(became_10_deal_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(became_10_deal_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(became_10_deal_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(became_10_deal_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(became_10_deal_date, '%M'),3) AS create_month,
+toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+CASE 
+  WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS close_quarter,
+LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+toYear(create_date) + if(toMonth(create_date) >= 4, 1, 0) AS 5_create_fy,
+  CASE 
+  WHEN toMonth(create_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(create_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(create_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(create_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS 5_create_quarter,
+LEFT(formatDateTime(create_date, '%M'),3) AS 5_create_month,
+    CASE
+      WHEN partner_type IN ('GSI','RSI') THEN 'GSI/SI'
+      WHEN partner_type IN ('OEM','Channel','BPO','ISV','MSP','Distributor','Advisory','Reseller through distributor','Reseller') THEN 'Reseller/BPO/TSD'
+      WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'AWS' THEN 'AWS'
+      WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'Microsoft' THEN 'Microsoft'
+    END AS Deal_Source
+FROM pipe_gen
+where is_this_a_deal_with_inception='No'
+and deal_type NOT IN ('Partner-Led SMB')
+
+)
+
+, 10_final as (
+  SELECT 
+  create_fy,
+  create_quarter,
+  create_month,
+  --deal_source_rollup,
+  Deal_Source,
+  -- partner_sales_director,
+  -- partner_sales_director_name,
+  -- deal_owner_name,
+  region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 10_creation
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5
+)
+
+, targets AS (
+  SELECT
+    CAST(FY AS UInt32) AS FY,
+    Quarter,
+    Month,
+    Region,
+    'AWS' AS Deal_Source,
+
+    SUM(toFloat64(replaceRegexpAll(L1_Amount_Target_10, '[^0-9.]', ''))) / 2 AS L1_Amount_Target_10,
+    SUM(toFloat64(L1_Deals_Target_10)) / 2 AS L1_Deals_Target_10,
+
+    SUM(toFloat64(replaceRegexpAll(L2_Amount_Target_10, '[^0-9.]', ''))) / 2 AS L2_Amount_Target_10,
+    SUM(toFloat64(L2_Deals_Target_10)) / 2 AS L2_Deals_Target_10,
+
+    --SUM(toFloat64(replaceRegexpAll(AWS_C1_Amount_Target_10, '[^0-9.]', '')))  AS Committed_Amount_Target_10,
+    SUM(toFloat64(AWS_C1_Targets_10)) AS Committed_Deals_Target_10
+
+  FROM kore_ai_hubspot.gs_partner_targets_L1_L2
+  WHERE Partner_Team = 'Hyperscaler'
+  GROUP BY 1,2,3,4
+
+  UNION ALL
+  
+  -- Microsoft row: Split L1/L2 targets 50/50, use MSFT committed targets
+  SELECT
+    CAST(FY AS UInt32) AS FY,
+    Quarter,
+    Month,
+    Region,
+    'Microsoft' AS Deal_Source,
+
+    SUM(toFloat64(replaceRegexpAll(L1_Amount_Target_10, '[^0-9.]', ''))) / 2 AS L1_Amount_Target_10,
+    SUM(toFloat64(L1_Deals_Target_10)) / 2 AS L1_Deals_Target_10,
+
+    SUM(toFloat64(replaceRegexpAll(L2_Amount_Target_10, '[^0-9.]', ''))) / 2 AS L2_Amount_Target_10,
+    SUM(toFloat64(L2_Deals_Target_10)) / 2 AS L2_Deals_Target_10,
+
+    --SUM(toFloat64(replaceRegexpAll(MSFT_C1_Amount_Target_10, '[^0-9.]', ''))) AS Committed_Amount_Target_10,
+    SUM(toFloat64(MSFT_C1_Targets_10)) AS Committed_Deals_Target_10
+
+  FROM kore_ai_hubspot.gs_partner_targets_L1_L2
+  WHERE Partner_Team = 'Hyperscaler'
+  GROUP BY 1,2,3,4
+
+  UNION ALL
+
+  -- Non-Hyperscaler partners: Keep L1/L2 as-is
+  SELECT
+    CAST(FY AS UInt32) AS FY,
+    Quarter,
+    Month,
+    Region,
+    CASE
+      WHEN Partner_Team = 'GSI-SI Partners' THEN 'GSI/SI'
+      WHEN Partner_Team = 'BPO/TSD/Reseller Partners' THEN 'Reseller/BPO/TSD'
+    END AS Deal_Source,
+
+    SUM(toFloat64(replaceRegexpAll(L1_Amount_Target_10, '[^0-9.]', ''))) AS L1_Amount_Target_10,
+    SUM(toFloat64(L1_Deals_Target_10)) AS L1_Deals_Target_10,
+
+    SUM(toFloat64(replaceRegexpAll(L2_Amount_Target_10, '[^0-9.]', ''))) AS L2_Amount_Target_10,
+    SUM(toFloat64(L2_Deals_Target_10)) AS L2_Deals_Target_10,
+
+    --SUM(toFloat64(replaceRegexpAll(Committed_Amount_Target_10, '[^0-9.]', ''))) AS Committed_Amount_Target_10,
+    SUM(toFloat64(Committed_Deals_Target_10)) AS Committed_Deals_Target_10
+
+  FROM kore_ai_hubspot.gs_partner_targets_L1_L2
+  WHERE Partner_Team != 'Hyperscaler'
+  GROUP BY 1,2,3,4,5
+)
+
+SELECT 
+b.FY,
+b.Quarter,
+b.Month,
+b.Region,
+b.Deal_Source,
+-- a.partner_sales_director,
+-- a.partner_sales_director_name,
+-- a.deal_owner_name,
+  COALESCE(SUM(a.amount), 0) AS actual_amount_10,
+  COALESCE(SUM(a.deals), 0) AS actual_deals_10,
+
+sum(CAST(coalesce(L1_Amount_Target_10,0) as int)) as L1_Amount_Target_10,
+sum(CAST(coalesce(L1_Deals_Target_10,0) as float)) as L1_Deals_Target_10,
+sum(CAST(coalesce(L2_Amount_Target_10,0) as int)) as L2_Amount_Target_10,
+sum(CAST(coalesce(L2_Deals_Target_10,0) as float)) as L2_Deals_Target_10,
+--SUM(b.Committed_Amount_Target_10) AS Committed_Amount_Target_10,
+SUM(b.Committed_Deals_Target_10)  AS Committed_Deals_Target_10
+
+from targets b
+LEFT JOIN 10_final a
+ON (b.FY = a.create_fy
+  AND b.Quarter = a.create_quarter 
+  AND b.Month = a.create_month
+  AND b.Deal_Source = a.Deal_Source
+  AND b.Region = a.region)
+-- WHERE create_fy=2026
+
+WHERE b.Deal_Source IN ('Reseller/BPO/TSD','GSI/SI','AWS','Microsoft')
+GROUP BY 1,2,3,4,5
+ORDER BY FY, Quarter, Month, Region, Deal_Source;
