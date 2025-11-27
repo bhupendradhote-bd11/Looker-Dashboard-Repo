@@ -1,0 +1,317 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt32(deal_id) as deal_id,
+  deal_name,
+  partner_type,
+  what_hyperscaler_is_involved,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date,  -- ADDED THIS
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  CASE WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  WHERE 
+    became_10_deal_date>='2025-04-01'
+    AND deal_stage in ('10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged')
+    and pipeline='default'
+)
+
+, looker_10_created as (
+SELECT DISTINCT *,
+'10% Created' as stage,
+toYear(became_10_deal_date) + if(toMonth(became_10_deal_date) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(became_10_deal_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(became_10_deal_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(became_10_deal_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(became_10_deal_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(became_10_deal_date, '%M'),3) AS create_month,
+toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+CASE 
+  WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS close_quarter,
+LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+toYear(create_date) + if(toMonth(create_date) >= 4, 1, 0) AS 5_create_fy,
+  CASE 
+  WHEN toMonth(create_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(create_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(create_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(create_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS 5_create_quarter,
+LEFT(formatDateTime(create_date, '%M'),3) AS 5_create_month,
+
+  CASE
+    WHEN partner_type IN ('GSI', 'RSI') THEN 'GSI/SI'
+    WHEN partner_type IN ('OEM', 'Channel', 'BPO', 'ISV', 'MSP', 'Distributor', 
+                          'Advisory', 'Reseller through distributor', 'Reseller') THEN 'Reseller/BPO/TSD'
+    WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'AWS' THEN 'AWS'
+    WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'Microsoft' THEN 'Microsoft'
+    --ELSE 'Others'
+END AS Deal_Source
+
+FROM pipe_gen
+where is_this_a_deal_with_inception='No'
+and deal_type NOT IN ('Partner-Led SMB')
+--AND (
+--    (deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved IS NOT NULL)
+--    OR (deal_source_rollup NOT IN ('Hyperscaler', 'Partner - Non Hyperscaler') AND what_hyperscaler_is_involved IS NOT NULL)
+--    OR (deal_source_rollup = 'Partner - Non Hyperscaler')
+--  )
+AND create_fy>=2026
+AND Deal_Source IN ('Reseller/BPO/TSD','GSI/SI', 'AWS', 'Microsoft')
+
+)
+
+
+SELECT
+'10% - Discovery' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+-- ORDER BY 2
+
+UNION ALL
+
+SELECT 
+'20% - Solution' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND (became_20_deal_date != '1900-01-01'
+OR deal_stage in ('20% - Solution',
+  '30% - Proof',
+  '40% - Proposal',
+  '60% - Price Negotiation',
+  '75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'))
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+-- ORDER BY 2
+
+UNION ALL
+
+SELECT 
+'30% - Proof' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND (became_30_deal_date != '1900-01-01'
+OR deal_stage in ('30% - Proof',
+  '40% - Proposal',
+  '60% - Price Negotiation',
+  '75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'))
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+-- ORDER BY 2
+
+UNION ALL
+
+SELECT 
+'40% - Proposal' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND (became_40_deal_date != '1900-01-01'
+OR deal_stage in ('40% - Proposal',
+  '60% - Price Negotiation',
+  '75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'))
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+
+UNION ALL
+
+SELECT 
+'60% - Price Negotiation' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND (became_60_deal_date != '1900-01-01'
+OR deal_stage in ('60% - Price Negotiation',
+  '75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'))
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+
+UNION ALL
+
+SELECT 
+'75% - Contract Review' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND (became_75_deal_date != '1900-01-01'
+OR deal_stage in ('75% - Contract Review',
+  '90% - Deal Desk Review',
+  'Closed Won'))
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+
+UNION ALL
+
+SELECT 
+'Closed Won' AS stage,
+create_fy,
+create_quarter,
+create_month,
+deal_source_rollup,
+what_hyperscaler_is_involved,
+partner_type,
+Deal_Source,
+CASE 
+  WHEN region = 'india___sea' THEN 'ISEA'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'japac' THEN 'JAPAC' ELSE region END AS region,
+ai_for_x,
+account_priority_level,
+became_10_deal_date,  -- Using became_10_deal_date consistently
+count(distinct deal_id) as deals
+
+FROM looker_10_created
+WHERE create_fy>=2026
+AND deal_stage in ('90% - Deal Desk Review',
+  'Closed Won')
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
