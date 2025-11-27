@@ -1,0 +1,128 @@
+WITH pipe_gen AS (
+  SELECT DISTINCT
+  toInt32(d.deal_id) as deal_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as createdate,
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS deal_region, 
+  amount,
+  pipeline, 
+  deal_source,
+  company_name as company,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN is_there_a_confirmation_of_budget ='Yes' AND 
+    who_is_the_decision_maker IS NOT NULL AND 
+    use_case IS NOT NULL AND
+    what_is_the_estimated_timeline IS NOT NULL  THEN 'Yes'
+    ELSE 'No' END AS BANT,
+  last_contacted as last_contacted_date,
+  dc.job_title,
+  t.Name as Team,
+  d.partner_employee_point_of_contact_associated, 
+  d.trusted_advisor_associated,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception,
+  number_of_sales_activities
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  LEFT JOIN (SELECT DISTINCT deal_id, contact_id, initcapUTF8(job_title) AS job_title from kore_ai_hubspot.gs_deals_contacts where job_title IS NOT NULL) dc on d.deal_id = dc.deal_id
+  left join kore_ai_hubspot.gs_Teams t on d.hubspot_team = t.TeamId
+  WHERE 
+  
+    deal_stage in (
+      '1% - IQM Scheduled',
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+)
+
+, companies as (
+  select distinct 
+  id as company_id,
+  company_name,
+  ae_focus_account, 
+  company_owner, 
+  bdr_ai_for_service,
+  bdr_ai_for_work_and_process,
+  min(c.priority) as priority,
+  max(CAST(left(coalesce(last_contacted,'1900-01-01'), 10) as date)) as last_contacted
+from hs_analytics.companies c final
+
+where ae_focus_account = 'true'
+and company_id in (select distinct company_id_hs from kore_ai_hubspot.gs_company_ids_hs)
+group by 1,2,3,4,5,6
+)
+
+
+select 
+distinct c.company_id,
+company_name,
+ae_focus_account, 
+company_owner, 
+concat(o1.firstName, ' ', o1.lastName) as company_owner_name,
+concat(o2.firstName, ' ', o2.lastName) as bdr_ai_for_service,
+concat(o3.firstName, ' ', o3.lastName) as bdr_ai_for_work_and_process,
+priority,
+last_contacted,
+sum(number_of_sales_activities) as number_of_sales_activities,
+count(distinct CASE WHEN create_date >='2025-04-01' and close_date >='2025-04-01' THEN d.deal_id ELSE NULL END) as 1_created,
+count(distinct CASE WHEN became_5_deal_date >='2025-04-01' or became_10_deal_date >='2025-04-01' THEN d.deal_id ELSE NULL END) as 5_created,
+count(distinct CASE WHEN became_10_deal_date >='2025-04-01' or (became_10_deal_date ='1900-01-01' and became_20_deal_date >='2025-04-01') THEN d.deal_id ELSE NULL END) as 10_created,
+count(distinct CASE WHEN became_20_deal_date >='2025-04-01' THEN d.deal_id ELSE NULL END) as 20_created,
+count(distinct CASE WHEN close_date >='2025-04-01' and deal_stage in ('90% - Deal Desk Review', 'Closed Won') THEN d.deal_id ELSE NULL END) as closed_won
+
+from companies c
+LEFT JOIN hs_analytics.owners o1 final ON c.company_owner = CAST(o1.id AS VARCHAR)
+LEFT JOIN hs_analytics.owners o2 final ON c.bdr_ai_for_service = CAST(o2.id AS VARCHAR)
+LEFT JOIN hs_analytics.owners o3 final ON c.bdr_ai_for_work_and_process = CAST(o3.id AS VARCHAR)
+LEFT JOIN pipe_gen d ON c.company_name = d.company
+
+group by 1,2,3,4,5,6,7,8,9
+
+
+
