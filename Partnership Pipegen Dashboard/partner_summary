@@ -1,0 +1,99 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt64(deal_id) as deal_id,
+  deal_name,
+  what_hyperscaler_is_involved,
+  partner_sales_director,
+  concat(o2.firstName, ' ', o2.lastName) as deal_owner_name,
+  concat(o1.firstName, ' ', o1.lastName) as partner_sales_director_name,
+  p.partner_name as partner_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE 'No Priority' END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception,
+  
+  CASE 
+  WHEN what_hyperscaler_is_involved = 'AWS' THEN 'AWS'
+  WHEN what_hyperscaler_is_involved = 'Microsoft' THEN 'Microsoft'
+  WHEN what_hyperscaler_is_involved = 'GCP' THEN 'GCP'
+  WHEN what_hyperscaler_is_involved = 'Hyperscaler Not Needed' THEN 'Hyperscaler Not Needed'
+  ELSE 'Hyperscaler - Not Assigned'
+  END AS hyperscaler_classification
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o1 final ON CAST(ifnull(d.partner_sales_director,'null') AS VARCHAR) = CAST(o1.id AS VARCHAR)
+  LEFT JOIN hs_analytics.owners o2 final ON d.deal_owner = CAST(o2.id AS VARCHAR)
+  LEFT JOIN hs_analytics.Partner p FINAL 
+    ON concat(o1.firstName, ' ', o1.lastName) = p.partner_sales_director_
+    AND p.partner_name IS NOT NULL 
+    AND p.partner_name != ''
+  WHERE 
+    became_5_deal_date>='2025-04-01'
+    AND deal_stage in (
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    AND pipeline='default'
+)
+
+SELECT
+    partner_name,
+    partner_sales_director_name,
+    count(distinct CASE WHEN create_date >='2025-04-01' and close_date >='2025-04-01' THEN deal_id ELSE NULL END) as 1_created,
+    count(distinct CASE WHEN became_5_deal_date >='2025-04-01' or became_10_deal_date >='2025-04-01' THEN deal_id ELSE NULL END) as 5_created,
+    count(distinct CASE WHEN became_10_deal_date >='2025-04-01' or (became_10_deal_date ='1900-01-01' and became_20_deal_date >='2025-04-01') THEN deal_id ELSE NULL END) as 10_created,
+    count(distinct CASE WHEN became_20_deal_date >='2025-04-01' THEN deal_id ELSE NULL END) as 20_created,
+    count(distinct CASE WHEN close_date >='2025-04-01' and deal_stage in ('90% - Deal Desk Review', 'Closed Won') THEN deal_id ELSE NULL END) as closed_won
+FROM pipe_gen
+WHERE deal_source_rollup IN ('Hyperscaler', 'Partner - Non Hyperscaler')
+  AND is_this_a_deal_with_inception='No'
+  AND deal_type NOT IN ('Partner-Led SMB')
+GROUP BY
+    partner_name,
+    partner_sales_director_name
