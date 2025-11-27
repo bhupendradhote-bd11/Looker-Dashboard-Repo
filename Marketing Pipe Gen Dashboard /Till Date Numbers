@@ -1,0 +1,177 @@
+WITH contacts as (
+  SELECT 
+  contact_id, 
+  record_id,
+  CASE WHEN region = 'LATAM' THEN 'Latin America'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'Asia Pacific' THEN 'ISEA' 
+  WHEN region IS NULL THEN 'North America' ELSE region END AS region, 
+
+  -- region, 
+  company_priority,
+  create_date, 
+  first_name, 
+  last_name,
+  concat(first_name, ' ',last_name) as Contact,
+  email,
+  original_source, 
+  event_name, 
+  field_event_name, 
+  job_title,
+  company_name,
+  contact_owner,
+  partner_employee,
+  content_syndication_partner,
+  brighttalk_user_id,
+  CAST(LEFT(coalesce(date_entered_marketing_qualified_lead_lifecycle_stage_pipeline, '1900-01-01'), 10) AS DATE) as date_entered_mql
+
+FROM hs_analytics.contacts final
+WHERE date_entered_marketing_qualified_lead_lifecycle_stage_pipeline >= '2025-04-01'
+AND company_priority in ('P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7')
+AND lead_status not in ('Bad Data')
+and contact_id in (select distinct mql_id_hs
+from kore_ai_hubspot.gs_mql_ids_hs)
+)
+
+, mql_created as (
+SELECT DISTINCT
+contact_id,
+Contact,
+date_entered_mql,
+toYear(date_entered_mql) + if(toMonth(date_entered_mql) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(date_entered_mql) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(date_entered_mql) IN (4,5,6) THEN 'Q1'
+  WHEN toMonth(date_entered_mql) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(date_entered_mql) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(date_entered_mql, '%M'),3) AS create_month,
+CASE WHEN original_source in ('ORGANIC_SEARCH', 'REFERRALS', 'OTHER_CAMPAIGNS', 'EMAIL_MARKETING', 'DIRECT_TRAFFIC', 'SOCIAL_MEDIA') THEN 'Inbound'
+WHEN original_source='PAID_SOCIAL' THEN 'Paid Social'
+WHEN original_source ='OFFLINE' AND content_syndication_partner='VIBE' THEN 'Contents Syndication'
+WHEN original_source ='OFFLINE' AND field_event_name IS NOT NULL THEN 'High Touch Events'
+WHEN original_source ='OFFLINE' AND event_name IS NOT NULL THEN 'Tradeshows'
+ELSE 'Offline Campaigns' END as mql_source,
+contact_id, 
+region, 
+company_priority,
+c.company_name,
+Contact
+
+FROM contacts c
+
+)
+
+, mql_final as (
+  SELECT 
+  create_fy,
+  create_quarter,
+  create_month,
+  mql_source,
+  region,
+  COUNT(DISTINCT contact_id) as mqls 
+
+  from mql_created
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5
+)
+
+
+, mql_targets as (
+SELECT 
+CAST(FY AS INT) AS FY,
+Quarter,
+CASE WHEN Quarter='Q1' THEN 1
+WHEN Quarter='Q2' THEN 2
+WHEN Quarter='Q3' THEN 3
+WHEN Quarter='Q4' THEN 4 ELSE 0 END AS quarter_num,
+Month,
+CASE
+  WHEN Month = 'Apr' THEN 1
+  WHEN Month = 'May' THEN 2
+  WHEN Month = 'Jun' THEN 3
+  WHEN Month = 'Jul' THEN 4
+  WHEN Month = 'Aug' THEN 5
+  WHEN Month = 'Sep' THEN 6
+  WHEN Month = 'Oct' THEN 7
+  WHEN Month = 'Nov' THEN 8
+  WHEN Month = 'Dec' THEN 9
+  WHEN Month = 'Jan' THEN 10
+  WHEN Month = 'Feb' THEN 11
+  WHEN Month = 'Mar' THEN 12
+  ELSE NULL
+END AS month_num,
+CASE 
+  WHEN EXTRACT(MONTH FROM current_date()) >= 4 
+    THEN EXTRACT(MONTH FROM CURRENT_DATE()) - 3
+  ELSE 
+    EXTRACT(MONTH FROM CURRENT_DATE()) + 9
+END AS current_fy_month,
+multiIf(
+        toMonth(today()) BETWEEN 4 AND 6, 'Q1',
+        toMonth(today()) BETWEEN 7 AND 9, 'Q2',
+        toMonth(today()) BETWEEN 10 AND 12, 'Q3',
+        toMonth(today()) BETWEEN 1 AND 3, 'Q4',
+        NULL
+    ) AS current_fy_quarter,
+Region,
+CASE WHEN Original_Source = 'Mini Campaigns' then 'Offline Campaigns' else Original_Source end as Original_Source,
+SUM(toFloat64(Amount_Target_20)) AS Amount_Target_20,
+SUM(toFloat32(Deals_Target_20)) AS Deals_Target_20,
+SUM(toFloat64(Amount_Target_10)) AS Amount_Target_10,
+SUM(toFloat32(Deals_Target_10)) AS Deals_Target_10,
+SUM(toFloat64(Amount_Target_5)) AS Amount_Target_5,
+SUM(toFloat32(Deals_Target_5)) AS Deals_Target_5,
+SUM(toFloat32(mql_target)) AS mql_target,
+SUM(toFloat32(L1_mql_target)) AS L1_mql_target
+
+FROM kore_ai_hubspot.gs_marketing_targets
+GROUP BY 1,2,3,4,5,6,7,8,9
+)
+
+, final as (
+SELECT 
+b.FY,
+b.Quarter,
+b.quarter_num,
+b.Month,
+b.month_num,
+b.current_fy_month,
+b.current_fy_quarter,
+b.Original_Source,
+b.Region,
+sum(a.mqls) as mqls,
+sum(toFloat32(coalesce(mql_target,0))) as mql_target,
+sum(toFloat32(coalesce(L1_mql_target,0))) as L1_mql_target
+
+from mql_targets b
+LEFT JOIN mql_final a
+ON (b.FY = a.create_fy
+  AND b.Quarter = a.create_quarter 
+  AND b.Month = a.create_month
+  AND b.Original_Source = a.mql_source 
+  AND b.Region = a.region)
+
+GROUP BY 1,2,3,4,5,6,7,8,9
+)
+
+SELECT 
+FY,
+Original_Source,
+Region,
+
+sum(CASE WHEN current_fy_month=month_num THEN L1_mql_target ELSE 0 END) L1_mql_target_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN L1_mql_target ELSE 0 END) L1_mql_target_QTD,
+sum(CASE WHEN month_num<=current_fy_month THEN L1_mql_target ELSE 0 END) AS L1_mql_target_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN mql_target ELSE 0 END) mql_target_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN mql_target ELSE 0 END) mql_target_QTD,
+sum(CASE WHEN month_num<=current_fy_month THEN mql_target ELSE 0 END) AS mql_target_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN mqls ELSE 0 END) mql_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter AND month_num<=current_fy_month THEN mqls ELSE 0 END) mql_actual_QTD,
+sum(CASE WHEN month_num<=current_fy_month THEN mqls ELSE 0 END) AS mql_actual_YTD
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY  
+GROUP BY 1,2,3
