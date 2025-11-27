@@ -1,0 +1,137 @@
+WITH contacts as (
+  SELECT 
+  contact_id, 
+  record_id,
+  CASE WHEN region = 'LATAM' THEN 'Latin America'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'Asia Pacific' THEN 'ISEA' 
+  WHEN region IS NULL THEN 'North America' ELSE region END AS region, 
+
+  -- region, 
+  company_priority,
+  create_date, 
+  first_name, 
+  last_name,
+  concat(first_name, ' ',last_name) as Contact,
+  email,
+  original_source, 
+  event_name, 
+  field_event_name, 
+  job_title,
+  company_name,
+  contact_owner,
+  partner_employee,
+  content_syndication_partner,
+  brighttalk_user_id,
+  CAST(LEFT(coalesce(date_entered_marketing_qualified_lead_lifecycle_stage_pipeline, '1900-01-01'), 10) AS DATE) as date_entered_mql
+
+FROM hs_analytics.contacts final
+WHERE date_entered_marketing_qualified_lead_lifecycle_stage_pipeline >= '2025-04-01'
+AND company_priority in ('P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7')
+AND lead_status not in ('Bad Data')
+and contact_id in (select distinct mql_id_hs
+from kore_ai_hubspot.gs_mql_ids_hs)
+
+)
+
+, mql_created as (
+SELECT DISTINCT
+contact_id,
+Contact,
+date_entered_mql,
+toYear(date_entered_mql) + if(toMonth(date_entered_mql) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(date_entered_mql) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(date_entered_mql) IN (4,5,6) THEN 'Q1'
+  WHEN toMonth(date_entered_mql) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(date_entered_mql) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(date_entered_mql, '%M'),3) AS create_month,
+CASE WHEN original_source in ('ORGANIC_SEARCH', 'REFERRALS', 'OTHER_CAMPAIGNS', 'EMAIL_MARKETING', 'DIRECT_TRAFFIC', 'SOCIAL_MEDIA') THEN 'Inbound'
+WHEN original_source='PAID_SOCIAL' THEN 'Paid Social'
+WHEN original_source ='OFFLINE' AND content_syndication_partner='VIBE' THEN 'Contents Syndication'
+WHEN original_source ='OFFLINE' AND field_event_name IS NOT NULL THEN 'High Touch Events'
+WHEN original_source ='OFFLINE' AND event_name IS NOT NULL THEN 'Tradeshows'
+ELSE 'Offline Campaigns' END as mql_source,
+original_source,
+content_syndication_partner, 
+field_event_name,
+mql_source,
+event_name,
+contact_id, 
+region, 
+company_priority,
+c.company_name,
+Contact
+
+
+FROM contacts c
+
+)
+
+-- select distinct 
+-- original_source, 
+-- content_syndication_partner, 
+-- field_event_name,
+-- event_name,
+-- mql_source
+
+-- from mql_created
+
+-- order by mql_source
+
+, mql_final as (
+  SELECT 
+  create_fy,
+  create_quarter,
+  create_month,
+  mql_source,
+  region,
+  COUNT(DISTINCT contact_id) as mqls 
+
+  from mql_created
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5
+)
+
+, targets as (
+SELECT 
+CAST(FY AS INT) AS FY,
+Quarter,
+Month,
+Region,
+CASE WHEN Original_Source = 'Mini Campaigns' then 'Offline Campaigns' else Original_Source end as Original_Source,
+SUM(toFloat64(Amount_Target_20)) AS Amount_Target_20,
+SUM(toFloat32(Deals_Target_20)) AS Deals_Target_20,
+SUM(toFloat64(Amount_Target_10)) AS Amount_Target_10,
+SUM(toFloat32(Deals_Target_10)) AS Deals_Target_10,
+SUM(toFloat64(Amount_Target_5)) AS Amount_Target_5,
+SUM(toFloat32(Deals_Target_5)) AS Deals_Target_5,
+SUM(toFloat32(mql_target)) AS mql_target,
+SUM(toFloat32(L1_mql_target)) AS L1_mql_target
+
+FROM kore_ai_hubspot.gs_marketing_targets
+GROUP BY 1,2,3,4,5
+)
+
+SELECT 
+b.FY,
+b.Quarter,
+b.Month,
+b.Region,
+b.Original_Source,
+sum(a.mqls) as actual_mql,
+sum(toFloat32(coalesce(mql_target,0))) as mql_target,
+sum(toFloat32(coalesce(L1_mql_target,0))) as L1_mql_target
+
+from targets b
+LEFT JOIN mql_final a
+ON (b.FY = a.create_fy
+  AND b.Quarter = a.create_quarter 
+  AND b.Month = a.create_month
+  AND b.Original_Source = a.mql_source
+  AND b.Region = a.region)
+-- WHERE create_fy=2026
+
+GROUP BY 1,2,3,4,5
+
