@@ -1,0 +1,173 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt32(deal_id) as deal_id,
+  deal_name,
+  partner_type,
+  what_hyperscaler_is_involved,
+  partner_sales_director,
+  concat(o2.firstName, ' ', o2.lastName) as deal_owner_name,
+  concat(o1.firstName, ' ', o1.lastName) as partner_sales_director_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  
+  CASE
+    WHEN partner_type IN ('GSI', 'RSI') THEN 'GSI/SI'
+    WHEN partner_type IN ('OEM', 'Channel', 'BPO', 'ISV', 'MSP', 'Distributor', 
+                          'Advisory', 'Reseller through distributor', 'Reseller') THEN 'Reseller/BPO/TSD'
+    WHEN deal_source_rollup = 'Hyperscaler' THEN 'Hyperscaler'
+  END AS Deal_Source,
+  
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE 'No Priority' END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o1 final ON d.partner_sales_director = CAST(o1.id AS VARCHAR)
+  LEFT JOIN hs_analytics.owners o2 final ON d.deal_owner = CAST(o2.id AS VARCHAR)
+  WHERE 
+    became_5_deal_date>='2025-04-01'
+  	AND deal_stage in (
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+)
+
+, 5_creation as (
+  SELECT DISTINCT *,
+  '5% Created' as stage,
+  toYear(became_5_deal_date) + if(toMonth(became_5_deal_date) >= 4, 1, 0) AS create_fy,
+  CASE 
+    WHEN toMonth(became_5_deal_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(became_5_deal_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(became_5_deal_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(became_5_deal_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS create_quarter,
+  LEFT(formatDateTime(became_5_deal_date, '%M'),3) AS create_month,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+  toYear(create_date) + if(toMonth(create_date) >= 4, 1, 0) AS 5_create_fy,
+  CASE 
+    WHEN toMonth(create_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(create_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(create_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(create_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS 5_create_quarter,
+  LEFT(formatDateTime(create_date, '%M'),3) AS 5_create_month,
+  CASE
+    WHEN partner_type IN ('GSI', 'RSI') THEN 'GSI/SI'
+    WHEN partner_type IN ('OEM', 'Channel', 'BPO', 'ISV', 'MSP', 'Distributor', 
+                          'Advisory', 'Reseller through distributor', 'Reseller') THEN 'Reseller/BPO/TSD'
+    WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'AWS' THEN 'AWS'
+    WHEN deal_source_rollup = 'Hyperscaler' AND what_hyperscaler_is_involved = 'Microsoft' THEN 'Microsoft'
+  END AS Deal_Source_Detail
+
+  FROM pipe_gen
+  where is_this_a_deal_with_inception='No'
+  and deal_type NOT IN ('Partner-Led SMB')
+)
+
+, 5_final as (
+  SELECT 
+  create_fy,
+  Deal_Source_Detail as Deal_Source,
+  region,
+  partner_sales_director,
+  partner_sales_director_name,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 5_creation
+  WHERE create_fy>=2026
+  AND Deal_Source_Detail IN ('AWS', 'Microsoft', 'Reseller/BPO/TSD','GSI/SI')
+  GROUP BY 1,2,3,4,5
+)
+
+, targets as (
+  SELECT 
+  CAST(FY AS INT) AS FY,
+  Region,
+  PSD,
+  CASE 
+    WHEN Partner_Team = 'Hyperscaler' THEN 'Hyperscaler'
+    WHEN Partner_Team = 'GSI/SI Partners' THEN 'GSI/SI'
+    WHEN Partner_Team = 'BPO/TSD/Reseller Partners' THEN 'Reseller/BPO/TSD'
+  END as Deal_Source,
+  Hyperscaler_Type,
+  SUM(toFloat32(Committed_Deals_Target_5)) AS Committed_Deals_Target_5,
+  SUM(toFloat32(Committed_Amount_Target_5)) AS Committed_Amount_Target_5
+  FROM kore_ai_hubspot.gs_partner_targets_psd 
+  WHERE Partner_Team IN ('Hyperscaler', 'GSI/SI Partners', 'BPO/TSD/Reseller Partners')
+  GROUP BY 1,2,3,4,5
+)
+
+--SELECT * FROM targets
+
+SELECT 
+    b.FY,
+    b.Deal_Source,
+    b.Region,
+    b.PSD,
+    b.Hyperscaler_Type,
+    COALESCE(sum(a.amount), 0) as actual_amount_5, 
+    COALESCE(sum(a.deals), 0) as actual_deals_5, 
+    SUM(CAST(COALESCE(b.Committed_Amount_Target_5, 0) AS int)) AS Committed_Amount_Target_5,
+    SUM(CAST(COALESCE(b.Committed_Deals_Target_5, 0) AS float)) AS Committed_Deals_Target_5
+FROM targets b
+LEFT JOIN 5_final a
+    ON (b.FY = a.create_fy
+        AND b.Deal_Source = a.Deal_Source 
+        AND b.Region = a.region
+        AND b.PSD = a.partner_sales_director_name)
+GROUP BY 1,2,3,4,5
+ORDER BY b.PSD
