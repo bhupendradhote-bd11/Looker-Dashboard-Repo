@@ -1,0 +1,731 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt64(deal_id) as deal_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  CASE 
+	WHEN deal_source_rollup in('Executive Outreach','Investor') then 'Executive Outreach'
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'AE Outbound', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE 'No Priority' END AS account_priority_level,  
+  CASE
+	WHEN 20_snapshot_deal_source_rollup in('Executive Outreach','Investor') then 'Executive Outreach'
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'AE Outbound', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,	
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  WHERE (close_date > '2024-01-31' or create_date > '2024-01-31')
+  --and d.deal_stage<>'Duplicate Record'
+  AND deal_stage in (
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+  and d.pipeline='default'
+)
+
+, 5_creation as (
+SELECT DISTINCT *,
+'5% Created' as stage,
+DATE_TRUNC('MONTH', became_5_deal_date) as month,
+DATE_TRUNC('QUARTER', became_5_deal_date) as quarter,
+toYear(became_5_deal_date) + if(toMonth(became_5_deal_date) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(became_5_deal_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(became_5_deal_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(became_5_deal_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(became_5_deal_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(became_5_deal_date, '%M'),3) AS create_month,
+MONTH(became_5_deal_date) AS create_month_num,
+toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+CASE 
+  WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+  WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS close_quarter,
+LEFT(formatDateTime(close_date, '%M'),3) AS close_month
+
+FROM pipe_gen
+WHERE became_5_deal_date > '2025-03-31'
+  AND is_this_a_deal_with_inception='No'
+  and deal_type NOT IN ('Partner-Led SMB')
+  AND deal_stage in (
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+
+)
+
+, 5_final as (
+  SELECT 
+  month,
+  quarter,
+  create_fy,
+  create_quarter,
+  create_month,
+  create_month_num,
+  deal_source_rollup,
+  region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 5_creation
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5,6,7,8
+)
+
+, 10_creation as (
+  SELECT DISTINCT *,
+  '10% Created' as stage,
+  DATE_TRUNC('MONTH', became_10_deal_date) as month,
+  DATE_TRUNC('QUARTER', became_10_deal_date) as quarter,
+  toYear(became_10_deal_date) + if(toMonth(became_10_deal_date) >= 4, 1, 0) AS create_fy,
+  CASE 
+    WHEN toMonth(became_10_deal_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(became_10_deal_date) IN (4,5,6) THEN 'Q1'
+    WHEN toMonth(became_10_deal_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(became_10_deal_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS create_quarter,
+  LEFT(formatDateTime(became_10_deal_date, '%M'),3) AS create_month,
+  MONTH(became_10_deal_date) AS create_month_num,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month,
+    toYear(create_date) + if(toMonth(create_date) >= 4, 1, 0) AS 5_create_fy,
+  CASE 
+    WHEN toMonth(create_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(create_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(create_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(create_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS 5_create_quarter,
+  LEFT(formatDateTime(create_date, '%M'),3) AS 5_create_month
+
+FROM pipe_gen
+WHERE became_10_deal_date > '2025-03-31'
+  AND is_this_a_deal_with_inception='No'
+  and deal_type NOT IN ('Partner-Led SMB')
+  AND deal_stage in (
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+
+
+)
+
+, 10_final as (
+  SELECT 
+  month,
+  quarter,
+  create_fy,
+  create_quarter,
+  create_month,
+  create_month_num,
+  deal_source_rollup,
+  region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 10_creation
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5,6,7,8
+)
+
+, 20_creation as (
+  SELECT DISTINCT *,
+  '20% Created' as stage,
+  DATE_TRUNC('MONTH', became_20_deal_date) as month,
+  DATE_TRUNC('QUARTER', became_20_deal_date) as quarter,
+  toYear(became_20_deal_date) + if(toMonth(became_20_deal_date) >= 4, 1, 0) AS create_fy,
+  CASE 
+    WHEN toMonth(became_20_deal_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(became_20_deal_date) IN (4,5,6) THEN 'Q1'
+    WHEN toMonth(became_20_deal_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(became_20_deal_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS create_quarter,
+  LEFT(formatDateTime(became_20_deal_date, '%M'),3) AS create_month,
+  MONTH(became_20_deal_date) AS create_month_num,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month
+
+FROM pipe_gen
+WHERE became_20_deal_date > '2025-03-31'
+  AND is_this_a_deal_with_inception='No'
+  and deal_type NOT IN ('Partner-Led SMB')
+  AND deal_stage in (
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+
+)
+
+, 20_final as (
+  SELECT 
+  month,
+  quarter,
+  create_fy,
+  create_quarter,
+  create_month,
+  create_month_num,
+  deal_source_rollup,
+  region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 20_creation
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5,6,7,8
+)
+
+--contacts start--
+
+,  contacts as (
+  SELECT 
+  contact_id, 
+  record_id,
+  CASE WHEN region = 'LATAM' THEN 'Latin America'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'Asia Pacific' THEN 'ISEA' 
+  WHEN region IS NULL THEN 'North America' ELSE region END AS region, 
+
+  -- region, 
+  company_priority,
+  create_date, 
+  first_name, 
+  last_name,
+  concat(first_name, ' ',last_name) as Contact,
+  email,
+  original_source, 
+  event_name, 
+  field_event_name, 
+  job_title,
+  company_name,
+  contact_owner,
+  partner_employee,
+  content_syndication_partner,
+  brighttalk_user_id,
+  CAST(LEFT(coalesce(date_entered_marketing_qualified_lead_lifecycle_stage_pipeline, '1900-01-01'), 10) AS DATE) as date_entered_mql
+
+FROM hs_analytics.contacts final
+WHERE date_entered_marketing_qualified_lead_lifecycle_stage_pipeline >= '2025-04-01'
+AND company_priority in ('P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7')
+)
+
+, mql_created as (
+SELECT DISTINCT
+contact_id,
+Contact,
+date_entered_mql,
+toYear(date_entered_mql) + if(toMonth(date_entered_mql) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(date_entered_mql) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(date_entered_mql) IN (4,5,6) THEN 'Q1'
+  WHEN toMonth(date_entered_mql) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(date_entered_mql) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(date_entered_mql, '%M'),3) AS create_month,
+CASE WHEN original_source in ('ORGANIC_SEARCH', 'REFERRALS', 'OTHER_CAMPAIGNS', 'EMAIL_MARKETING', 'DIRECT_TRAFFIC', 'SOCIAL_MEDIA') THEN 'Inbound'
+WHEN original_source ='OFFLINE' AND content_syndication_partner='VIBE' THEN 'Contents Syndication'
+WHEN original_source ='OFFLINE' AND field_event_name IS NOT NULL THEN 'High Touch Events'
+WHEN original_source ='OFFLINE' AND event_name IS NOT NULL THEN 'Tradeshows'
+ELSE 'Mini Campaigns' END as mql_source,
+contact_id, 
+region, 
+company_priority,
+c.company_name,
+Contact
+
+
+FROM contacts c
+
+)
+
+,mql_final as (
+  SELECT 
+  create_fy,
+  create_quarter,
+  create_month,
+  mql_source,
+  region,
+  COUNT(DISTINCT contact_id) as mqls 
+
+  from mql_created
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5
+)
+
+
+, 
+
+
+mql_targets as (
+SELECT 
+CAST(FY AS INT) AS FY,
+Quarter,
+Month,
+Region,
+Original_Source,
+SUM(toFloat64(Amount_Target_20)) AS Amount_Target_20,
+SUM(toFloat32(Deals_Target_20)) AS Deals_Target_20,
+SUM(toFloat64(Amount_Target_10)) AS Amount_Target_10,
+SUM(toFloat32(Deals_Target_10)) AS Deals_Target_10,
+SUM(toFloat64(Amount_Target_5)) AS Amount_Target_5,
+SUM(toFloat32(Deals_Target_5)) AS Deals_Target_5,
+SUM(toFloat32(mql_target)) AS mql_target,
+SUM(toFloat32(L1_mql_target)) AS L1_mql_target
+FROM kore_ai_hubspot.gs_marketing_targets
+GROUP BY 1,2,3,4,5
+)
+
+, mql_last as (
+SELECT 
+b.FY as create_fy,
+b.Quarter as create_quarter,
+b.Month as create_month,
+b.Original_Source,
+'Marketing' as source,
+-- b.Region as region,
+sum(a.mqls) as mqls,
+sum(CAST(coalesce(mql_target,0) as int)) as mql_target,
+sum(CAST(coalesce(L1_mql_target,0) as int)) as L1_mql_target
+from mql_targets b
+LEFT JOIN mql_final a
+ON (b.FY = a.create_fy
+  AND b.Quarter = a.create_quarter 
+  AND b.Month = a.create_month
+  AND b.Original_Source = a.mql_source 
+  AND b.Region = a.region)
+
+GROUP BY 1,2,3,4,5
+)
+
+--contacts end--
+
+, targets as (
+
+SELECT 
+CAST(FY AS INT) AS FY,
+Quarter,
+CASE WHEN Quarter='Q1' THEN 1
+WHEN Quarter='Q2' THEN 2
+WHEN Quarter='Q3' THEN 3
+WHEN Quarter='Q4' THEN 4 ELSE 0 END AS quarter_num,
+Month,
+CASE
+  WHEN Month = 'Apr' THEN 1
+  WHEN Month = 'May' THEN 2
+  WHEN Month = 'Jun' THEN 3
+  WHEN Month = 'Jul' THEN 4
+  WHEN Month = 'Aug' THEN 5
+  WHEN Month = 'Sep' THEN 6
+  WHEN Month = 'Oct' THEN 7
+  WHEN Month = 'Nov' THEN 8
+  WHEN Month = 'Dec' THEN 9
+  WHEN Month = 'Jan' THEN 10
+  WHEN Month = 'Feb' THEN 11
+  WHEN Month = 'Mar' THEN 12
+  ELSE NULL
+END AS month_num,
+CASE 
+  WHEN EXTRACT(MONTH FROM current_date()) >= 4 
+    THEN EXTRACT(MONTH FROM CURRENT_DATE()) - 3
+  ELSE 
+    EXTRACT(MONTH FROM CURRENT_DATE()) + 9
+END AS current_fy_month,
+multiIf(
+        toMonth(today()) BETWEEN 4 AND 6, 'Q1',
+        toMonth(today()) BETWEEN 7 AND 9, 'Q2',
+        toMonth(today()) BETWEEN 10 AND 12, 'Q3',
+        toMonth(today()) BETWEEN 1 AND 3, 'Q4',
+        NULL
+    ) AS current_fy_quarter,
+Region,
+CASE 
+  WHEN Source in ('Hyperscalers') THEN 'Hyperscaler' 
+  WHEN Source in ('Executive Outreach','Investor') then 'Executive Outreach'
+  WHEN Source in ('Partner - Excluding Hyperscalers') THEN 'Partner - Non Hyperscaler' ELSE Source END AS Deal_Source,
+
+SUM(toFloat32(Deals_Target_5)) AS Deals_Target_5,
+SUM(toFloat32(Deals_Target_5_L1)) AS Deals_Target_5_L1,
+SUM(toFloat32(Deals_Target_5_committed)) AS Deals_Target_5_committed,
+
+SUM(toFloat32(Deals_Target_10)) AS Deals_Target_10,
+SUM(toFloat32(Deals_Target_10_L1)) AS Deals_Target_10_L1,
+SUM(toFloat32(Deals_Target_10_committed)) AS Deals_Target_10_committed,
+
+SUM(toFloat64(Amount_Target_20)) AS Amount_Target_20,
+SUM(toFloat32(Deals_Target_20)) AS Deals_Target_20,
+SUM(ifnull(toFloat64(Amount_Target_20_L1),0)) AS Amount_Target_20_L1,
+SUM(toFloat32(Deals_Target_20_L1)) AS Deals_Target_20_L1,
+SUM(ifnull(toFloat64(Amount_Target_20_committed),0)) AS Amount_Target_20_committed,
+SUM(toFloat32(Deals_Target_20_committed)) AS Deals_Target_20_committed
+
+
+FROM kore_ai_hubspot.gs_pipeline_quotas_v1
+GROUP BY 1,2,3,4,5,6,7,8,9
+)
+
+, deals_final as (
+
+
+SELECT 
+b.FY,
+b.Quarter,
+b.quarter_num,
+b.Month,
+b.month_num,
+b.current_fy_month,
+b.current_fy_quarter,
+b.Deal_Source,
+
+round(
+    (today() - toStartOfMonth(today()) + 1) 
+    / toDayOfMonth(toLastDayOfMonth(today())), 2
+) AS pct_days_lapsed_in_month,
+
+round(
+    (today() - toStartOfQuarter(today()) + 1) 
+    / date_diff(Day, toStartOfQuarter(now()) ,
+        toStartOfQuarter(addMonths(now(), 3))), 2
+) AS pct_days_lapsed_in_quarter,
+
+round(
+      (today() - toDate(concat(if(toMonth(today()) >= 4, toYear(today()), toYear(today()) - 1), '-04-01')) + 1)
+      /
+      (toDate(concat(if(toMonth(today()) >= 4, toYear(today()) + 1, toYear(today())), '-03-31')) 
+      -
+      toDate(concat(if(toMonth(today()) >= 4, toYear(today()), toYear(today()) - 1), '-04-01')) + 1)
+, 2) AS pct_days_lapsed_in_fiscal_year,
+
+sum(x.deals) as actual_deals_5, 
+sum(CAST(coalesce(Deals_Target_5,0) as int)) as deals_target_5,
+sum(CAST(coalesce(Deals_Target_5_L1,0) as int)) as deals_target_5_L1,
+sum(CAST(coalesce(Deals_Target_5_committed,0) as int)) as deals_target_5_committed,
+
+
+sum(y.deals) as actual_deals_10, 
+sum(CAST(coalesce(Deals_Target_10,0) as int)) as deals_target_10,
+sum(CAST(coalesce(Deals_Target_10_L1,0) as int)) as deals_target_10_L1,
+sum(CAST(coalesce(Deals_Target_10_committed,0) as int)) as deals_target_10_committed,
+
+
+sum(z.amount) as actual_amount_20, 
+sum(CAST(coalesce(Amount_Target_20,0) as int)) as amount_target_20,
+sum(CAST(coalesce(Amount_Target_20_L1,0) as int)) as amount_target_20_L1,
+sum(CAST(coalesce(Amount_Target_20_committed,0) as int)) as amount_target_20_committed,
+
+sum(z.deals) as actual_deals_20, 
+sum(CAST(coalesce(Deals_Target_20,0) as int)) as deals_target_20,
+sum(CAST(coalesce(Deals_Target_20_L1,0) as int)) as deals_target_20_L1,
+sum(CAST(coalesce(Deals_Target_20_committed,0) as int)) as deals_target_20_committed
+
+from targets b
+
+LEFT JOIN 5_final x
+ON (b.FY = x.create_fy
+  AND b.Quarter = x.create_quarter 
+  AND b.Month = x.create_month
+  AND b.Deal_Source = x.deal_source_rollup 
+  AND b.Region = x.region)
+
+LEFT JOIN 10_final y
+ON (b.FY = y.create_fy
+  AND b.Quarter = y.create_quarter 
+  AND b.Month = y.create_month
+  AND b.Deal_Source = y.deal_source_rollup 
+  AND b.Region = y.region)
+
+LEFT JOIN 20_final z
+ON (b.FY = z.create_fy
+  AND b.Quarter = z.create_quarter 
+  AND b.Month = z.create_month
+  AND b.Deal_Source = z.deal_source_rollup 
+  AND b.Region = z.region)
+
+GROUP BY 1,2,3,4,5,6,7,8,9,10,11
+)
+
+, final as (
+select b.*,
+sum(m.mqls) as actual_mql, 
+sum(m.mql_target) as mql_target,
+sum(m.L1_mql_target) as L1_mql_target
+
+from deals_final b 
+LEFT JOIN mql_last m
+ON (b.FY = m.create_fy
+  AND b.Quarter = m.create_quarter
+  AND b.Month = m.create_month
+  AND b.Deal_Source = m.source
+  -- AND b.Region = m.region
+  )
+
+  group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27
+
+)
+
+, last_final as (
+
+SELECT 
+FY,
+'MQL' as stage,
+Deal_Source,
+pct_days_lapsed_in_month,
+pct_days_lapsed_in_quarter,
+pct_days_lapsed_in_fiscal_year,
+
+sum(CASE WHEN current_fy_month=month_num THEN mql_target ELSE 0 END) deals_target_month,
+sum(CASE WHEN current_fy_quarter=Quarter THEN mql_target ELSE 0 END) deals_target_quarter,
+sum(mql_target) AS deals_target_fy,
+sum(CASE WHEN current_fy_month=month_num THEN actual_mql ELSE 0 END) deals_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter THEN actual_mql ELSE 0 END) deals_actual_QTD,
+sum(actual_mql) AS deals_actual_YTD,
+NULL AS amount_target_month,
+NULL AS amount_target_quarter,
+NULL AS amount_target_fy,
+NULL as amount_actual_MTD,
+NULL as amount_actual_QTD,
+NULL as amount_actual_YTD,
+NULL as amount_target_month_L1,
+NULL as amount_target_quarter_L1,
+NULL as amount_target_fy_L1,
+NULL as amount_target_month_committed,
+NULL as amount_target_quarter_committed,
+NULL as amount_target_fy_committed,
+
+sum(CASE WHEN current_fy_month=month_num THEN L1_mql_target ELSE 0 END) deals_target_month_L1,
+sum(CASE WHEN current_fy_quarter=Quarter THEN L1_mql_target ELSE 0 END) deals_target_quarter_L1,
+sum(L1_mql_target) AS deals_target_fy_L1,
+
+null as deals_target_month_committed,
+null as deals_target_quarter_committed,
+null as deals_target_fy_committed
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY 
+and Deal_Source in ('Executive Outreach')
+GROUP BY 1,2,3,4,5,6
+
+UNION ALL
+
+SELECT 
+FY,
+'5% - IQM Held' as stage,
+Deal_Source,
+pct_days_lapsed_in_month,
+pct_days_lapsed_in_quarter,
+pct_days_lapsed_in_fiscal_year,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_5 ELSE 0 END) deals_target_month,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_5 ELSE 0 END) deals_target_quarter,
+sum(deals_target_5) AS deals_target_fy,
+sum(CASE WHEN current_fy_month=month_num THEN actual_deals_5 ELSE 0 END) deals_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter THEN actual_deals_5 ELSE 0 END) deals_actual_QTD,
+sum(actual_deals_5) AS deals_actual_YTD,
+NULL AS amount_target_month,
+NULL AS amount_target_quarter,
+NULL AS amount_target_fy,
+NULL as amount_actual_MTD,
+NULL as amount_actual_QTD,
+NULL as amount_actual_YTD,
+NULL as amount_target_month_L1,
+NULL as amount_target_quarter_L1,
+NULL as amount_target_fy_L1,
+NULL as amount_target_month_committed,
+NULL as amount_target_quarter_committed,
+NULL as amount_target_fy_committed,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_5_L1 ELSE 0 END) deals_target_month_L1,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_5_L1 ELSE 0 END) deals_target_quarter_L1,
+sum(deals_target_5_L1) AS deals_target_fy_L1,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_5_committed ELSE 0 END) deals_target_month_committed,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_5_committed ELSE 0 END) deals_target_quarter_committed,
+sum(deals_target_5_committed) AS deals_target_fy_committed
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY  
+and Deal_Source in ('Executive Outreach')
+GROUP BY 1,2,3,4,5,6
+
+UNION ALL
+
+SELECT 
+FY,
+'10% - Discovery' as stage,
+Deal_Source,
+pct_days_lapsed_in_month,
+pct_days_lapsed_in_quarter,
+pct_days_lapsed_in_fiscal_year,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_10 ELSE 0 END) deals_target_month,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_10 ELSE 0 END) deals_target_quarter,
+sum(deals_target_10) AS deals_target_fy,
+sum(CASE WHEN current_fy_month=month_num THEN actual_deals_10 ELSE 0 END) deals_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter THEN actual_deals_10 ELSE 0 END) deals_actual_QTD,
+sum(actual_deals_10) AS deals_actual_YTD,
+NULL AS amount_target_month,
+NULL AS amount_target_quarter,
+NULL AS amount_target_fy,
+NULL as amount_actual_MTD,
+NULL as amount_actual_QTD,
+NULL as amount_actual_YTD,
+NULL as amount_target_month_L1,
+NULL as amount_target_quarter_L1,
+NULL as amount_target_fy_L1,
+NULL as amount_target_month_committed,
+NULL as amount_target_quarter_committed,
+NULL as amount_target_fy_committed,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_10_L1 ELSE 0 END) deals_target_month_L1,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_10_L1 ELSE 0 END) deals_target_quarter_L1,
+sum(deals_target_10_L1) AS deals_target_fy_L1,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_10_committed ELSE 0 END) deals_target_month_committed,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_10_committed ELSE 0 END) deals_target_quarter_committed,
+sum(deals_target_10_committed) AS deals_target_fy_committed
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY  
+and Deal_Source in ('Executive Outreach')
+GROUP BY 1,2,3,4,5,6
+
+UNION ALL
+
+SELECT 
+FY,
+'20% - Solution' as stage,
+Deal_Source,
+pct_days_lapsed_in_month,
+pct_days_lapsed_in_quarter,
+pct_days_lapsed_in_fiscal_year,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_20 ELSE 0 END) deals_target_month,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_20 ELSE 0 END) deals_target_quarter,
+sum(deals_target_20) AS deals_target_fy,
+sum(CASE WHEN current_fy_month=month_num THEN actual_deals_20 ELSE 0 END) deals_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter THEN actual_deals_20 ELSE 0 END) deals_actual_QTD,
+sum(actual_deals_20) AS deals_actual_YTD,
+
+sum(CASE WHEN current_fy_month=month_num THEN amount_target_20 ELSE 0 END) amount_target_month,
+sum(CASE WHEN current_fy_quarter=Quarter THEN amount_target_20 ELSE 0 END) amount_target_quarter,
+sum(amount_target_20) AS amount_target_fy,
+sum(CASE WHEN current_fy_month=month_num THEN actual_amount_20 ELSE 0 END) amount_actual_MTD,
+sum(CASE WHEN current_fy_quarter=Quarter THEN actual_amount_20 ELSE 0 END) amount_actual_QTD,
+sum(actual_amount_20) AS amount_actual_YTD,
+
+
+sum(CASE WHEN current_fy_month=month_num THEN amount_target_20_L1 ELSE 0 END) amount_target_month_L1,
+sum(CASE WHEN current_fy_quarter=Quarter THEN amount_target_20_L1 ELSE 0 END) amount_target_quarter_L1,
+sum(amount_target_20_L1) AS amount_target_fy_L1,
+
+sum(CASE WHEN current_fy_month=month_num THEN amount_target_20_committed ELSE 0 END) amount_target_month_committed,
+sum(CASE WHEN current_fy_quarter=Quarter THEN amount_target_20_committed ELSE 0 END) amount_target_quarter_committed,
+sum(amount_target_20_committed) AS amount_target_fy_committed,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_20_L1 ELSE 0 END) deals_target_month_L1,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_20_L1 ELSE 0 END) deals_target_quarter_L1,
+sum(deals_target_20_L1) AS deals_target_fy_L1,
+
+sum(CASE WHEN current_fy_month=month_num THEN deals_target_20_committed ELSE 0 END) deals_target_month_committed,
+sum(CASE WHEN current_fy_quarter=Quarter THEN deals_target_20_committed ELSE 0 END) deals_target_quarter_committed,
+sum(deals_target_20_committed) AS deals_target_fy_committed
+
+FROM final 
+WHERE (toYear(current_date()) + if(toMonth(current_date()) >= 4, 1, 0))=FY  
+and Deal_Source in ('Executive Outreach')
+GROUP BY 1,2,3,4,5,6
+
+
+)
+
+SELECT *, 
+round((deals_actual_MTD / pct_days_lapsed_in_month), 2) AS deals_forecasted_for_month,
+round((deals_actual_QTD / pct_days_lapsed_in_quarter), 2) AS deals_forecasted_for_quarter,
+round((deals_actual_YTD / pct_days_lapsed_in_fiscal_year), 2) AS deals_forecasted_for_year,
+round((amount_actual_MTD / pct_days_lapsed_in_month), 2) AS amount_forecasted_for_month,
+round((amount_actual_QTD / pct_days_lapsed_in_quarter), 2) AS amount_forecasted_for_quarter,
+round((amount_actual_YTD / pct_days_lapsed_in_fiscal_year), 2) AS amount_forecasted_for_year
+
+FROM last_final
+
+order by 3
