@@ -1,0 +1,395 @@
+WITH pipe_gen AS (
+  SELECT DISTINCT
+  toInt32(d.deal_id) as deal_id,
+  record_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(d.create_date, '1900-01-01'), 10) AS DATE) as createdate,
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_5_deal_date, '1900-01-01'), 10) AS DATE) as became_5_deal_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS deal_region, 
+  amount,
+  pipeline, 
+  deal_source,
+  -- company_name,
+  CASE 
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE NULL END AS account_priority_level,
+  CASE 
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'Executive Outreach', 'AE Outbound', 'Investor', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN is_there_a_confirmation_of_budget ='Yes' AND 
+    who_is_the_decision_maker IS NOT NULL AND 
+    use_case IS NOT NULL AND
+    what_is_the_estimated_timeline IS NOT NULL  THEN 'Yes'
+    ELSE 'No' END AS BANT,
+  last_contacted,
+  -- dc.job_title,
+  t.Name as Team,
+  d.partner_employee_point_of_contact_associated, 
+  d.trusted_advisor_associated,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  LEFT JOIN (SELECT DISTINCT deal_id, contact_id, initcapUTF8(job_title) AS job_title from kore_ai_hubspot.gs_deals_contacts where job_title IS NOT NULL) dc on d.deal_id = dc.deal_id
+  left join kore_ai_hubspot.gs_Teams t on d.hubspot_team = t.TeamId
+  WHERE 
+    create_date>='2025-04-01'
+    and deal_stage in (
+      '1% - IQM Scheduled',
+      '5% - IQM Held',
+      '10% - Discovery',
+      '20% - Solution',
+      '30% - Proof',
+      '40% - Proposal',
+      '60% - Price Negotiation',
+      '75% - Contract Review',
+      '90% - Deal Desk Review',
+      'Closed Won',
+      'Closed Lost',
+      'Didn''t Qualify',
+      'Prospect Disengaged'
+    )
+    and pipeline='default'
+  	--and deal_source_rollup='Marketing'
+)
+
+-- SELECT * FROM pipe_gen
+
+, contacts as (
+  SELECT 
+  contact_id, 
+  record_id,
+  region, 
+  company_priority,
+  create_date, 
+  first_name, 
+  last_name,
+  concat(first_name, ' ',last_name) as Contact,
+  email,
+  original_source, 
+  event_name, 
+  field_event_name, 
+  job_title,
+  company_name,
+  contact_owner,
+  partner_employee,
+  content_syndication_partner,
+  brighttalk_user_id,
+  CAST(LEFT(coalesce(date_entered_marketing_qualified_lead_lifecycle_stage_pipeline, '1900-01-01'), 10) AS DATE) as date_entered_mql
+
+FROM hs_analytics.contacts final
+WHERE date_entered_marketing_qualified_lead_lifecycle_stage_pipeline >= '2025-04-01'
+AND company_priority in ('P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7')
+AND lead_status not in ('Bad Data')
+and contact_id in (select distinct mql_id_hs
+from kore_ai_hubspot.gs_mql_ids_hs)
+)
+
+--SELECT * FROM contacts
+
+, deals_created as (
+SELECT DISTINCT
+contact_id,
+Contact,
+date_entered_mql,
+toYear(date_entered_mql) + if(toMonth(date_entered_mql) >= 4, 1, 0) AS create_fy,
+CASE 
+  WHEN toMonth(date_entered_mql) IN (1,2,3) THEN 'Q4'
+  WHEN toMonth(date_entered_mql) IN (4,5,6) THEN 'Q1'
+  WHEN toMonth(date_entered_mql) IN (7,8,9) THEN 'Q2'
+  WHEN toMonth(date_entered_mql) IN (10,11,12) THEN 'Q3'
+  ELSE NULL END AS create_quarter,
+LEFT(formatDateTime(date_entered_mql, '%M'),3) AS create_month,
+CASE WHEN original_source in ('ORGANIC_SEARCH', 'REFERRALS', 'OTHER_CAMPAIGNS', 'EMAIL_MARKETING', 'DIRECT_TRAFFIC', 'SOCIAL_MEDIA') THEN 'Inbound'
+WHEN original_source='PAID_SOCIAL' THEN 'Paid Social'
+WHEN original_source ='OFFLINE' AND content_syndication_partner='VIBE' THEN 'Content Syndication'
+WHEN original_source ='OFFLINE' AND field_event_name IS NOT NULL THEN 'High Touch Events'
+WHEN original_source ='OFFLINE' AND event_name IS NOT NULL THEN 'Tradeshows'
+ELSE 'Offline Campaigns' END as mql_source,
+original_source,
+contact_id, 
+c.region, 
+company_priority,
+c.job_title,
+d.deal_id,
+d.deal_name,
+d.deal_stage,
+d.deal_source_rollup,
+d.deal_url,
+d.amount,
+d.deal_region,
+d.ai_for_x,
+d.kore_primary_industry,
+d.createdate as create_date,
+d.close_date,
+c.company_name,
+became_5_deal_date, 
+became_10_deal_date,
+became_20_deal_date, 
+became_30_deal_date, 
+became_40_deal_date, 
+became_60_deal_date, 
+became_75_deal_date,
+d.BANT,
+d.last_contacted,
+-- d.job_title,
+d.Team,
+d.deal_owner_name as Owner,
+Contact,
+date_diff('Day', c.date_entered_mql, d.create_date) as days_mql_to_deal,
+d.deal_type,
+d.is_this_a_deal_with_inception
+FROM contacts c
+LEFT JOIN (SELECT contact_id AS c_id, deal_id AS d_id FROM kore_ai_hubspot.gs_DealContactAssociation where createdate>='2025-04-01') z
+ON c.contact_id = z.c_id
+LEFT JOIN (select * from pipe_gen where is_this_a_deal_with_inception='No'
+and deal_type NOT IN ('Partner-Led SMB')) d ON z.d_id = toString(d.record_id)
+
+)
+
+--SELECT * FROM deals_created
+
+, final as (
+SELECT DISTINCT
+create_fy,
+create_quarter,
+create_month,
+create_date,
+became_5_deal_date, 
+became_10_deal_date,
+became_20_deal_date, 
+became_30_deal_date, 
+became_40_deal_date, 
+became_60_deal_date, 
+became_75_deal_date,
+DATE_DIFF('Day',create_date, became_5_deal_date) AS 1_to_5,
+DATE_DIFF('Day',became_5_deal_date, became_10_deal_date) AS 5_to_10,
+DATE_DIFF('Day',became_10_deal_date, became_20_deal_date) AS 10_to_20,
+DATE_DIFF('Day',became_20_deal_date, became_30_deal_date) AS 20_to_30,
+DATE_DIFF('Day',became_30_deal_date, became_40_deal_date) AS 30_to_40,
+DATE_DIFF('Day',became_40_deal_date, became_60_deal_date) AS 40_to_60,
+DATE_DIFF('Day',became_60_deal_date, became_75_deal_date) AS 60_to_75,
+CASE 
+  WHEN deal_stage IN (
+    'Prospect Disengaged',
+    'Closed Lost',
+    'Didn''t Qualify',
+    '90% - Deal Desk Review',
+    'Closed Won'
+  ) THEN NULL
+  WHEN deal_stage = '1% - IQM Scheduled' AND create_date<>'1900-01-01' THEN DATE_DIFF('Day', create_date, CURRENT_DATE())
+  WHEN deal_stage = '5% - IQM Held' AND became_5_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_5_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '10% - Discovery' AND became_10_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_10_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '20% - Solution' AND became_20_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_20_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '30% - Proof' AND became_30_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_30_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '40% - Proposal' AND became_40_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_40_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '60% - Price Negotiation' AND became_60_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_60_deal_date, CURRENT_DATE())
+  WHEN deal_stage = '75% - Contract Review' AND became_75_deal_date<>'1900-01-01' THEN DATE_DIFF('Day', became_75_deal_date, CURRENT_DATE())
+  ELSE NULL END AS days_in_current_stage,
+original_source,
+mql_source,
+region,
+company_priority,
+deal_id,
+contact_id,
+deal_name,
+deal_stage,
+CASE WHEN deal_stage IS NULL THEN 'MQL without Deals' else deal_stage end as mql_stage,
+deal_url,
+amount,
+deal_region,
+ai_for_x,
+kore_primary_industry,
+company_name,
+create_date,
+close_date,
+BANT,
+last_contacted,
+Owner,
+Team,
+job_title,
+Contact,
+date_entered_mql,
+deal_type,
+is_this_a_deal_with_inception
+
+FROM deals_created b
+WHERE create_fy>=2026
+
+)
+
+SELECT
+    1 AS stage_order,
+    'MQLs' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(distinct contact_id) AS deals -- Counts all MQLs found in 'deals_created' (i.e., MQLs with an associated deal)
+FROM deals_created
+WHERE create_fy >= 2026
+GROUP BY 1, 2, 3, 4,5 
+
+UNION ALL
+
+SELECT
+    2 AS stage_order,
+    '1% - IQM Scheduled' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(distinct deal_id) AS deals -- Deals that reached this stage (based on create_date != '1900-01-01')
+FROM final
+WHERE create_fy >= 2026
+--AND create_date != '1900-01-01'
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    3 AS stage_order,
+    '5% - IQM Held' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals -- Deals that reached this stage
+FROM final
+WHERE create_fy >= 2026
+AND (became_5_deal_date != '1900-01-01' OR became_10_deal_date != '1900-01-01') -- Using your original logic
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4,5
+
+UNION ALL
+
+SELECT
+    4 AS stage_order,
+    '10% - Discovery' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_10_deal_date != '1900-01-01')
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    5 AS stage_order,
+    '20% - Solution' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_20_deal_date != '1900-01-01')
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    6 AS stage_order,
+    '30% - Proof' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_30_deal_date != '1900-01-01')
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    7 AS stage_order,
+    '40% - Proposal' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_40_deal_date != '1900-01-01')
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    8 AS stage_order,
+    '60% - Price Negotiation' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_60_deal_date != '1900-01-01')
+--AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    9 AS stage_order,
+    '75% - Contract Review' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND (became_75_deal_date != '1900-01-01')
+AND deal_stage IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5
+
+UNION ALL
+
+SELECT
+    10 AS stage_order,
+    'Closed Won' AS stage,
+    date_entered_mql AS de,
+    original_source AS os,
+    mql_source AS ms,
+    COUNT(DISTINCT deal_id) AS deals
+FROM final
+WHERE create_fy >= 2026
+AND deal_stage IS NOT NULL
+AND close_date != '1900-01-01'
+AND deal_stage = 'Closed Won'
+GROUP BY 1, 2, 3, 4,5
