@@ -1,0 +1,156 @@
+WITH pipe_gen AS (
+  SELECT
+  toInt64(deal_id) as deal_id,
+  deal_name,
+  concat(o.firstName, ' ', lastName) as deal_owner_name,
+  CAST(LEFT(coalesce(create_date, '1900-01-01'), 10) AS DATE) as create_date, 
+  CAST(LEFT(coalesce(close_date, '1900-01-01'), 10) AS DATE) as close_date, 
+  CAST(LEFT(coalesce(became_10_deal_date, '1900-01-01'), 10) AS DATE) as became_10_deal_date, 
+  CAST(LEFT(coalesce(became_20_deal_date, '1900-01-01'), 10) AS DATE) as became_20_deal_date,
+  CAST(LEFT(coalesce(became_30_deal_date, '1900-01-01'), 10) AS DATE) as became_30_deal_date,
+  CAST(LEFT(coalesce(became_40_deal_date, '1900-01-01'), 10) AS DATE) as became_40_deal_date,
+  CAST(LEFT(coalesce(became_60_deal_date, '1900-01-01'), 10) AS DATE) as became_60_deal_date,
+  CAST(LEFT(coalesce(became_75_deal_date, '1900-01-01'), 10) AS DATE) as became_75_deal_date, 
+  deal_stage, 
+  CASE WHEN region = 'japac' THEN 'JAPAC'
+  WHEN region = 'Africa' THEN 'Middle East'
+  WHEN region = 'india___sea' THEN 'ISEA' ELSE region END AS region, 
+  amount,
+  pipeline, 
+  deal_source,
+  CASE 
+	WHEN deal_source_rollup in('Executive Outreach','Investor') then 'Executive Outreach'
+    WHEN deal_source_rollup in ('Marketing', 'Customer Success', 'AE Outbound', 'Inception', 'Hyperscaler')
+    THEN deal_source_rollup 
+    WHEN deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler' ELSE 'Other' end as deal_source_rollup,
+  deal_url,
+  CASE 
+    WHEN account_priority_level IN ('P1', 'P2', 'P3', 'P4') THEN 'P1-P4'
+    WHEN account_priority_level IN ('P5', 'P6', 'P7') THEN 'P5-P7'
+    WHEN account_priority_level IN ('P8', 'P9', 'P10') THEN 'P8-P10'
+  ELSE 'No Priority' END AS account_priority_level,
+  CASE
+	WHEN 20_snapshot_deal_source_rollup in('Executive Outreach','Investor') then 'Executive Outreach'
+    WHEN 20_snapshot_deal_source_rollup in('Marketing', 'BDR', 'Customer Success', 'AE Outbound', 'Inception', 'Hyperscaler')
+    THEN 20_snapshot_deal_source_rollup 
+    WHEN 20_snapshot_deal_source_rollup in ('BDR Outbound') THEN 'BDR' 
+  	WHEN 20_snapshot_deal_source_rollup in ('Partner') THEN 'Partner - Non Hyperscaler'  ELSE 'Other' end as 20_snapshot_deal_source_rollup,
+  ai_for_x,
+  CASE WHEN kore_primary_industry IN ('Financial Services', 'Banking', 'Insurance') THEN 'Financial Services'
+  WHEN kore_primary_industry IN ('Manufacturing Discreet', 'Manufacturing Process', 'CPG') THEN 'Manufacturing'
+  WHEN kore_primary_industry IN ('Hi-Tech', 'Telecom / Media / Entertainment') THEN 'TMT'
+  WHEN kore_primary_industry IN ('Business Services', 'Government', 'Energy & Utilities', 'Education', 'Restaurants', 'null', 'Energy') THEN 'Other'
+  ELSE kore_primary_industry END as kore_primary_industry,
+  CASE WHEN deal_type IS NULL THEN 'Not Assigned' ELSE deal_type END AS deal_type,
+  CASE WHEN is_this_a_deal_with_inception='Yes' THEN 'Yes' ELSE 'No' END as is_this_a_deal_with_inception
+
+  FROM hs_analytics.deals d final
+  LEFT JOIN hs_analytics.owners o final ON d.deal_owner = CAST(o.id AS VARCHAR)
+  WHERE 
+  -- CAST(LEFT(close_date, 10) AS DATE)>= CAST('2024-04-01' AS DATE)
+  close_date > '2024-03-31'
+  --d.became_20_deal_date>='2025-04-01' AND d.became_20_deal_date<='2025-07-30'
+  AND d.pipeline = 'default'
+  AND d.deal_stage IN (
+  '5% - Initial Qualification Meeting',
+  '10% - Discovery',
+  '20% - Solution',
+  '30% - Proof',
+  '40% - Proposal',
+  '60% - Price Negotiation',
+  '75% - Contract Review',
+  'Prospect Disengaged',
+  'Closed Lost',
+  'Didn''t Qualify',
+  '90% - Deal Desk Review',
+  'Closed Won'
+  )
+)
+
+, 20_creation as (
+  SELECT DISTINCT *,
+  '20% Created' as stage,
+  toYear(became_20_deal_date) + if(toMonth(became_20_deal_date) >= 4, 1, 0) AS create_fy,
+  CASE 
+    WHEN toMonth(became_20_deal_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(became_20_deal_date) IN (4,5,6) THEN 'Q1'
+    WHEN toMonth(became_20_deal_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(became_20_deal_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS create_quarter,
+  LEFT(formatDateTime(became_20_deal_date, '%M'),3) AS create_month,
+  toYear(close_date) + if(toMonth(close_date) >= 4, 1, 0) AS close_fy,
+  CASE 
+    WHEN toMonth(close_date) IN (1,2,3) THEN 'Q4'
+    WHEN toMonth(close_date) IN (4,5,6,) THEN 'Q1'
+    WHEN toMonth(close_date) IN (7,8,9) THEN 'Q2'
+    WHEN toMonth(close_date) IN (10,11,12) THEN 'Q3'
+    ELSE NULL END AS close_quarter,
+  LEFT(formatDateTime(close_date, '%M'),3) AS close_month
+
+FROM pipe_gen
+WHERE became_20_deal_date >= '2025-04-01'
+AND is_this_a_deal_with_inception='No'
+and deal_type NOT IN ('Partner-Led SMB')
+
+)
+
+, 20_final as (
+  SELECT 
+  create_fy,
+  create_quarter,
+  create_month,
+  deal_source_rollup,
+  region,
+  SUM(amount) as amount,
+  COUNT(DISTINCT deal_id) as deals  
+  from 20_creation
+  WHERE create_fy>=2026
+  GROUP BY 1,2,3,4,5
+)
+
+, targets as (
+SELECT 
+CAST(FY AS INT) AS FY,
+Quarter,
+Month,
+Region,
+CASE 
+  WHEN Source in ('Hyperscalers') THEN 'Hyperscaler' 
+  WHEN Source in ('Executive Outreach','Investor') then 'Executive Outreach'
+  WHEN Source in ('Partner - Excluding Hyperscalers') THEN 'Partner - Non Hyperscaler' ELSE Source END AS Deal_Source,
+SUM(toFloat64(Amount_Target_20)) AS Amount_Target_20,
+SUM(toFloat32(Deals_Target_20)) AS Deals_Target_20,
+SUM(toFloat64(Amount_Target_20_L1)) AS Amount_Target_20_L1,
+SUM(toFloat32(Deals_Target_20_L1)) AS Deals_Target_20_L1,
+SUM(toFloat64(Amount_Target_20_committed)) AS Amount_Target_20_committed,
+SUM(toFloat32(Deals_Target_20_committed)) AS Deals_Target_20_committed
+
+FROM kore_ai_hubspot.gs_pipeline_quotas_v1
+GROUP BY 1,2,3,4,5
+)
+
+SELECT 
+b.FY,
+b.Quarter,
+b.Month,
+b.Region,
+b.Deal_Source,
+sum(a.amount) as actual_amount_20, 
+sum(a.deals) as actual_deals_20, 
+SUM(toFloat64(Amount_Target_20)) AS amount_target_20,
+SUM(toFloat32(Deals_Target_20)) AS deals_target_20,
+SUM(toFloat64(Amount_Target_20_L1)) AS Amount_Target_20_L1,
+SUM(toFloat32(Deals_Target_20_L1)) AS Deals_Target_20_L1,
+SUM(toFloat64(Amount_Target_20_committed)) AS Amount_Target_20_committed,
+SUM(toFloat32(Deals_Target_20_committed)) AS Deals_Target_20_committed
+
+from targets b
+LEFT JOIN 20_final a
+ON (b.FY = a.create_fy
+  AND b.Quarter = a.create_quarter 
+  AND b.Month = a.create_month
+  AND b.Deal_Source = a.deal_source_rollup 
+  AND b.Region = a.region)
+
+GROUP BY 1,2,3,4,5
